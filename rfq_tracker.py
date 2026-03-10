@@ -194,6 +194,11 @@ def init_db():
             con.execute("ALTER TABLE rfqs ADD COLUMN due_date TEXT")
         except sqlite3.OperationalError:
             pass
+        # Migration: add description column for existing databases
+        try:
+            con.execute("ALTER TABLE rfqs ADD COLUMN description TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
@@ -330,11 +335,12 @@ class RFQApp(tk.Tk):
                         highlightthickness=1, highlightbackground=BORDER)
         card.pack(fill=tk.BOTH, expand=True)
 
-        cols = ("status", "name", "company", "phone", "email", "date", "due")
+        cols = ("status", "desc", "name", "company", "phone", "email", "date", "due")
         self.tree = ttk.Treeview(card, columns=cols, show="headings",
                                   selectmode="browse")
 
         self.tree.heading("status",  text="Status")
+        self.tree.heading("desc",    text="RFQ Description")
         self.tree.heading("name",    text="Contact Name")
         self.tree.heading("company", text="Company")
         self.tree.heading("phone",   text="Phone")
@@ -343,10 +349,11 @@ class RFQApp(tk.Tk):
         self.tree.heading("due",     text="Due Date")
 
         self.tree.column("status",  width=100, anchor="center", stretch=False)
-        self.tree.column("name",    width=150, stretch=True)
-        self.tree.column("company", width=160, stretch=True)
-        self.tree.column("phone",   width=120, stretch=False)
-        self.tree.column("email",   width=190, stretch=True)
+        self.tree.column("desc",    width=180, stretch=True)
+        self.tree.column("name",    width=140, stretch=True)
+        self.tree.column("company", width=140, stretch=True)
+        self.tree.column("phone",   width=110, stretch=False)
+        self.tree.column("email",   width=170, stretch=True)
         self.tree.column("date",    width=100, anchor="center", stretch=False)
         self.tree.column("due",     width=100, anchor="center", stretch=False)
 
@@ -364,6 +371,7 @@ class RFQApp(tk.Tk):
         card.grid_rowconfigure(0, weight=1)
         card.grid_columnconfigure(0, weight=1)
 
+        self.tree.bind("<Button-1>",  self._on_tree_click)
         self.tree.bind("<Double-1>", lambda e: self.open_selected())
         self.tree.bind("<Return>",   lambda e: self.open_selected())
 
@@ -396,15 +404,15 @@ class RFQApp(tk.Tk):
 
         with db_connect() as con:
             rows = con.execute(
-                "SELECT id, name, company, phone, email, status, date_created, due_date "
+                "SELECT id, name, company, phone, email, status, date_created, due_date, description "
                 "FROM rfqs ORDER BY created_at DESC"
             ).fetchall()
 
         shown = 0
-        for rid, name, company, phone, email, status, date_c, due_date in rows:
+        for rid, name, company, phone, email, status, date_c, due_date, desc in rows:
             if filt != "All" and status != filt:
                 continue
-            if search and search not in f"{name} {company} {phone} {email}".lower():
+            if search and search not in f"{name} {company} {phone} {email} {desc}".lower():
                 continue
 
             tags = [status.lower().replace(" ", "_")]
@@ -420,7 +428,7 @@ class RFQApp(tk.Tk):
                     pass
 
             self.tree.insert("", "end", iid=str(rid),
-                             values=(status, name, company,
+                             values=(status, desc or "", name, company,
                                      phone or "—", email or "—",
                                      date_c or "", due_date or ""),
                              tags=tuple(tags))
@@ -433,7 +441,7 @@ class RFQApp(tk.Tk):
 
         self.status_var.set(
             f"   Showing {shown} of {len(rows)} RFQs   |   "
-            f"Double-click or right-click to manage"
+            f"Click status to change  |  Double-click to open  |  Right-click for more"
         )
 
     def _sort_by_column(self, col, reverse):
@@ -442,6 +450,28 @@ class RFQApp(tk.Tk):
         for i, (_, k) in enumerate(data):
             self.tree.move(k, '', i)
         self.tree.heading(col, command=lambda: self._sort_by_column(col, not reverse))
+
+    def _on_tree_click(self, event):
+        """Single-click on the Status column opens a quick-change popup."""
+        region = self.tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        col = self.tree.identify_column(event.x)
+        if col != "#1":  # Status is the first column
+            return
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        self.tree.selection_set(item)
+        menu = tk.Menu(self, tearoff=0, font=("Segoe UI", 10))
+        for s in STATUS_OPTIONS:
+            color = STATUS_COLORS.get(s, DARK)
+            menu.add_command(
+                label=f"  {s}",
+                foreground=color,
+                command=lambda st=s: self._quick_status(st)
+            )
+        menu.post(event.x_root, event.y_root)
 
     def _show_ctx(self, event):
         item = self.tree.identify_row(event.y)
@@ -476,7 +506,7 @@ class RFQApp(tk.Tk):
         if not sel:
             return
         rid  = int(sel[0])
-        name = self.tree.item(sel[0])["values"][1]
+        name = self.tree.item(sel[0])["values"][2]
         if messagebox.askyesno("Delete RFQ",
                                f"Permanently delete the RFQ for '{name}'?\n"
                                f"This cannot be undone.", icon="warning"):
@@ -681,7 +711,7 @@ class RFQDetailWindow(tk.Toplevel):
         if self.rfq_id:
             with db_connect() as con:
                 self.row_data = con.execute(
-                    "SELECT name, company, phone, email, status, date_created, due_date "
+                    "SELECT name, company, phone, email, status, date_created, due_date, description "
                     "FROM rfqs WHERE id=?", (self.rfq_id,)
                 ).fetchone()
                 self.activities = con.execute(
@@ -734,6 +764,7 @@ class RFQDetailWindow(tk.Toplevel):
         tab = ttk.Frame(nb, padding=20)
         nb.add(tab, text="  Details  ")
 
+        self.desc_var     = tk.StringVar()
         self.name_var     = tk.StringVar()
         self.company_var  = tk.StringVar()
         self.phone_var    = tk.StringVar()
@@ -743,10 +774,11 @@ class RFQDetailWindow(tk.Toplevel):
         self.due_date_var = tk.StringVar(value="")
 
         fields = [
-            ("Contact Name *", self.name_var),
-            ("Company",        self.company_var),
-            ("Phone / Cell",   self.phone_var),
-            ("Email Address",  self.email_var),
+            ("RFQ Description", self.desc_var),
+            ("Contact Name *",  self.name_var),
+            ("Company",         self.company_var),
+            ("Phone / Cell",    self.phone_var),
+            ("Email Address",   self.email_var),
         ]
 
         self._entries = {}
@@ -946,7 +978,8 @@ class RFQDetailWindow(tk.Toplevel):
     def _populate_fields(self):
         if not self.row_data:
             return
-        name, company, phone, email, status, date_c, due_date = self.row_data
+        name, company, phone, email, status, date_c, due_date, desc = self.row_data
+        self.desc_var.set(desc or "")
         self.name_var.set(name or "")
         self.company_var.set(company or "")
         self.phone_var.set(phone or "")
@@ -1083,6 +1116,7 @@ class RFQDetailWindow(tk.Toplevel):
             messagebox.showerror("Required", "Contact Name is required.")
             return
 
+        desc     = self.desc_var.get().strip()
         company  = self.company_var.get().strip()
         phone    = self.phone_var.get().strip()
         email    = self.email_var.get().strip()
@@ -1095,9 +1129,9 @@ class RFQDetailWindow(tk.Toplevel):
             if self.is_new:
                 con.execute(
                     "INSERT INTO rfqs "
-                    "(name, company, phone, email, status, date_created, created_at, due_date) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (name, company, phone, email, status, date_c, ts, due_date)
+                    "(name, company, phone, email, status, date_created, created_at, due_date, description) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (name, company, phone, email, status, date_c, ts, due_date, desc)
                 )
                 new_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
                 con.execute(
@@ -1110,8 +1144,8 @@ class RFQDetailWindow(tk.Toplevel):
                 old_status = self.row_data[4] if self.row_data else None
                 con.execute(
                     "UPDATE rfqs SET name=?, company=?, phone=?, email=?, "
-                    "status=?, date_created=?, due_date=? WHERE id=?",
-                    (name, company, phone, email, status, date_c, due_date, self.rfq_id)
+                    "status=?, date_created=?, due_date=?, description=? WHERE id=?",
+                    (name, company, phone, email, status, date_c, due_date, desc, self.rfq_id)
                 )
                 if old_status and old_status != status:
                     con.execute(
