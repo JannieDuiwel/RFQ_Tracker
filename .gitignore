@@ -1,0 +1,7 @@
+*.db
+settings.json
+__pycache__/
+dist/
+build/
+*.spec
+*.pyc
