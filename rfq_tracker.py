@@ -18,7 +18,7 @@ import time
 
 # ─── Version ─────────────────────────────────────────────────────────────────
 APP_VERSION = "1.0.0"
-GITHUB_REPO = ""  # Set after gh repo create, e.g. "username/RFQ_Tracker"
+GITHUB_REPO = "JannieDuiwel/RFQ_Tracker"
 
 # ─── Notification Support ─────────────────────────────────────────────────────
 NOTIF_AVAILABLE = False
