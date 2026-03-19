@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RFQ Tracker Pro
+RFQ Tracker
 A Request for Quote management and tracking desktop application.
 """
 
@@ -45,7 +45,7 @@ def send_notification(title, message):
             _plyer_notif.notify(
                 title=title,
                 message=message,
-                app_name="RFQ Tracker Pro",
+                app_name="RFQ Tracker",
                 timeout=10
             )
         except Exception:
@@ -227,7 +227,7 @@ BORDER  = "#dfe6e9"
 class RFQApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"RFQ Tracker Pro  v{APP_VERSION}")
+        self.title(f"RFQ Tracker  v{APP_VERSION}")
         self.geometry("1100x640")
         self.minsize(860, 520)
         self.configure(bg=BG)
@@ -277,7 +277,7 @@ class RFQApp(tk.Tk):
         bar = tk.Frame(self, bg=DARK, padx=18, pady=12)
         bar.pack(fill=tk.X)
 
-        tk.Label(bar, text="📋  RFQ Tracker Pro", bg=DARK, fg=SURFACE,
+        tk.Label(bar, text="📋  RFQ Tracker", bg=DARK, fg=SURFACE,
                  font=("Segoe UI", 15, "bold")).pack(side=tk.LEFT)
 
         tk.Button(bar, text="  + New RFQ  ",
@@ -444,9 +444,17 @@ class RFQApp(tk.Tk):
             f"Click status to change  |  Double-click to open  |  Right-click for more"
         )
 
+    _ARCHIVE_STATUSES = {"Done", "Lost"}
+
     def _sort_by_column(self, col, reverse):
         data = [(self.tree.set(k, col), k) for k in self.tree.get_children()]
-        data.sort(key=lambda t: (t[0] == "", t[0]), reverse=reverse)
+
+        def sort_key(t):
+            val, k = t
+            is_archive = self.tree.set(k, "status") in self._ARCHIVE_STATUSES
+            return (is_archive, val == "", val)
+
+        data.sort(key=sort_key, reverse=reverse)
         for i, (_, k) in enumerate(data):
             self.tree.move(k, '', i)
         self.tree.heading(col, command=lambda: self._sort_by_column(col, not reverse))
@@ -531,7 +539,7 @@ class RFQApp(tk.Tk):
             pystray.MenuItem("Exit", self._quit_from_tray),
         )
         self.tray_icon = pystray.Icon("RFQTracker", image,
-                                       "RFQ Tracker Pro", menu)
+                                       "RFQ Tracker", menu)
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
     def _hide_to_tray(self):
