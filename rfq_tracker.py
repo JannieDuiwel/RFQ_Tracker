@@ -529,7 +529,6 @@ class RFQApp(tk.Tk):
                 lost_count += 1
 
             tags = [status.lower().replace(" ", "_")]
-            tags.append("evenrow" if row_idx % 2 == 0 else "oddrow")
             if due_date:
                 try:
                     due_dt = datetime.strptime(due_date, "%Y-%m-%d").date()
@@ -551,10 +550,9 @@ class RFQApp(tk.Tk):
 
         for s, color in STATUS_COLORS.items():
             self.tree.tag_configure(s.lower().replace(" ", "_"), foreground=color)
-        self.tree.tag_configure("evenrow", background=SURFACE)
-        self.tree.tag_configure("oddrow",  background=_ROW_ALT)
         self.tree.tag_configure("overdue",  background=_OVERDUE_BG)
         self.tree.tag_configure("due_soon", background=_DUE_SOON_BG)
+        self._restripe()
 
         # Status bar with win/loss ratio
         parts = [f"   Showing {shown} of {len(rows)} RFQs"]
@@ -566,6 +564,15 @@ class RFQApp(tk.Tk):
         self.status_var.set("   |   ".join(parts))
 
         self.refresh_calendar()
+
+    def _restripe(self):
+        """Re-apply alternating row colors based on current visual order."""
+        self.tree.tag_configure("evenrow", background=SURFACE)
+        self.tree.tag_configure("oddrow",  background=_ROW_ALT)
+        for idx, iid in enumerate(self.tree.get_children()):
+            cur_tags = [t for t in self.tree.item(iid, "tags") if t not in ("evenrow", "oddrow")]
+            cur_tags.append("evenrow" if idx % 2 == 0 else "oddrow")
+            self.tree.item(iid, tags=cur_tags)
 
     _ARCHIVE_STATUSES = {"Done", "Lost"}
 
@@ -580,6 +587,7 @@ class RFQApp(tk.Tk):
         data.sort(key=sort_key, reverse=reverse)
         for i, (_, k) in enumerate(data):
             self.tree.move(k, '', i)
+        self._restripe()
         self.tree.heading(col, command=lambda: self._sort_by_column(col, not reverse))
 
         # Persist sort preference
