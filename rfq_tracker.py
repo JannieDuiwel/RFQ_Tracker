@@ -15,9 +15,10 @@ import webbrowser
 from datetime import datetime
 import threading
 import time
+import calendar as _cal_stdlib
 
 # ─── Version ─────────────────────────────────────────────────────────────────
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.3.0"
 GITHUB_REPO = "JannieDuiwel/RFQ_Tracker"
 
 # ─── Notification Support ─────────────────────────────────────────────────────
@@ -94,6 +95,9 @@ DEFAULT_SETTINGS = {
     "start_with_windows": False,
     "minimize_to_tray": False,
     "close_to_tray": False,
+    "dark_mode": False,
+    "sort_column": "",
+    "sort_reverse": False,
 }
 
 
@@ -201,7 +205,7 @@ def init_db():
             pass
 
 
-# ─── Constants ────────────────────────────────────────────────────────────────
+# ─── Theme System ────────────────────────────────────────────────────────────
 STATUS_OPTIONS = ["Pending", "In Progress", "Quoted", "Won", "Lost", "Done"]
 
 STATUS_COLORS = {
@@ -213,23 +217,68 @@ STATUS_COLORS = {
     "Done":        "#6c5ce7",
 }
 
-BG      = "#f4f6fb"
-SURFACE = "#ffffff"
-DARK    = "#2d3561"
-ACCENT  = "#6c5ce7"
-GREEN   = "#00b894"
-DANGER  = "#e17055"
-SUBTEXT = "#636e72"
-BORDER  = "#dfe6e9"
+LIGHT_THEME = {
+    "BG": "#f4f6fb", "SURFACE": "#ffffff", "TEXT": "#2d3561",
+    "ACCENT": "#6c5ce7", "GREEN": "#00b894", "DANGER": "#e17055",
+    "SUBTEXT": "#636e72", "BORDER": "#dfe6e9",
+    "TOOLBAR_BG": "#2d3561", "TOOLBAR_FG": "#ffffff",
+    "SEARCH_BG": "#3d4a8a",
+    "ROW_ALT": "#f7f8fc", "SELECTED": "#e8eaf6",
+    "CAL_EMPTY": "#f0f2f7",
+    "OVERDUE_BG": "#ffeaea", "DUE_SOON_BG": "#fff3e0",
+}
+
+DARK_THEME = {
+    "BG": "#1e1e2e", "SURFACE": "#2a2a3d", "TEXT": "#e0e0ef",
+    "ACCENT": "#9d8cff", "GREEN": "#00d9a3", "DANGER": "#ff6b6b",
+    "SUBTEXT": "#a0a0b8", "BORDER": "#3a3a50",
+    "TOOLBAR_BG": "#151525", "TOOLBAR_FG": "#e0e0ef",
+    "SEARCH_BG": "#3a3a50",
+    "ROW_ALT": "#252538", "SELECTED": "#3d3d5c",
+    "CAL_EMPTY": "#252538",
+    "OVERDUE_BG": "#3d2020", "DUE_SOON_BG": "#3d3520",
+}
+
+# Module-level color globals (set by apply_theme)
+BG = SURFACE = DARK = ACCENT = GREEN = DANGER = SUBTEXT = BORDER = ""
+_TOOLBAR_BG = _TOOLBAR_FG = _SEARCH_BG = ""
+_ROW_ALT = _SELECTED = _CAL_EMPTY = _OVERDUE_BG = _DUE_SOON_BG = ""
+
+
+def apply_theme(theme):
+    global BG, SURFACE, DARK, ACCENT, GREEN, DANGER, SUBTEXT, BORDER
+    global _TOOLBAR_BG, _TOOLBAR_FG, _SEARCH_BG
+    global _ROW_ALT, _SELECTED, _CAL_EMPTY, _OVERDUE_BG, _DUE_SOON_BG
+    BG       = theme["BG"]
+    SURFACE  = theme["SURFACE"]
+    DARK     = theme["TEXT"]
+    ACCENT   = theme["ACCENT"]
+    GREEN    = theme["GREEN"]
+    DANGER   = theme["DANGER"]
+    SUBTEXT  = theme["SUBTEXT"]
+    BORDER   = theme["BORDER"]
+    _TOOLBAR_BG  = theme["TOOLBAR_BG"]
+    _TOOLBAR_FG  = theme["TOOLBAR_FG"]
+    _SEARCH_BG   = theme["SEARCH_BG"]
+    _ROW_ALT     = theme["ROW_ALT"]
+    _SELECTED    = theme["SELECTED"]
+    _CAL_EMPTY   = theme["CAL_EMPTY"]
+    _OVERDUE_BG  = theme["OVERDUE_BG"]
+    _DUE_SOON_BG = theme["DUE_SOON_BG"]
+
+
+# Apply default theme (overridden at startup based on settings)
+apply_theme(LIGHT_THEME)
 
 
 # ─── Main Application Window ──────────────────────────────────────────────────
 class RFQApp(tk.Tk):
     def __init__(self):
         super().__init__()
+        self._restart = False
         self.title(f"RFQ Tracker  v{APP_VERSION}")
-        self.geometry("1100x640")
-        self.minsize(860, 520)
+        self.geometry("1100x750")
+        self.minsize(860, 600)
         self.configure(bg=BG)
         self.settings = load_settings()
         self.tray_icon = None
@@ -238,11 +287,25 @@ class RFQApp(tk.Tk):
         self._build_toolbar()
         self._build_main()
         self.refresh_table()
+        self._apply_saved_sort()
         self._start_reminder_thread()
         self._setup_tray()
         self._check_for_updates()
+        self._bind_shortcuts()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Unmap>", self._on_minimize)
+
+    # ── Keyboard Shortcuts ─────────────────────────────────────────────────
+    def _bind_shortcuts(self):
+        self.bind("<Control-n>", lambda e: self.open_new_rfq())
+        self.bind("<Control-N>", lambda e: self.open_new_rfq())
+        self.bind("<Control-f>", lambda e: self._focus_search())
+        self.bind("<Control-F>", lambda e: self._focus_search())
+        self.bind("<Delete>", lambda e: self.delete_selected())
+
+    def _focus_search(self):
+        self.search_entry.focus_set()
+        self.search_entry.select_range(0, tk.END)
 
     # ── Styling ───────────────────────────────────────────────────────────────
     def _setup_style(self):
@@ -265,73 +328,99 @@ class RFQApp(tk.Tk):
                         rowheight=34, fieldbackground=SURFACE,
                         font=("Segoe UI", 10), borderwidth=0)
         style.configure("Treeview.Heading",
-                        background=DARK, foreground=SURFACE,
+                        background=_TOOLBAR_BG, foreground=_TOOLBAR_FG,
                         font=("Segoe UI", 10, "bold"),
                         padding=8, relief="flat")
         style.map("Treeview",
-                  background=[("selected", "#e8eaf6")],
+                  background=[("selected", _SELECTED)],
                   foreground=[("selected", DARK)])
 
     # ── Toolbar ───────────────────────────────────────────────────────────────
     def _build_toolbar(self):
-        bar = tk.Frame(self, bg=DARK, padx=18, pady=12)
+        bar = tk.Frame(self, bg=_TOOLBAR_BG, padx=18, pady=12)
         bar.pack(fill=tk.X)
 
-        tk.Label(bar, text="📋  RFQ Tracker", bg=DARK, fg=SURFACE,
+        tk.Label(bar, text="\U0001f4cb  RFQ Tracker", bg=_TOOLBAR_BG, fg=_TOOLBAR_FG,
                  font=("Segoe UI", 15, "bold")).pack(side=tk.LEFT)
 
         tk.Button(bar, text="  + New RFQ  ",
-                  bg=GREEN, fg=SURFACE,
+                  bg=GREEN, fg=_TOOLBAR_FG,
                   font=("Segoe UI", 10, "bold"),
                   relief="flat", cursor="hand2",
                   command=self.open_new_rfq,
                   padx=10, pady=5).pack(side=tk.RIGHT, padx=4)
 
-        tk.Button(bar, text=" ⚙ ",
-                  bg=ACCENT, fg=SURFACE,
+        tk.Button(bar, text=" \u2699 ",
+                  bg=ACCENT, fg=_TOOLBAR_FG,
                   font=("Segoe UI", 11),
                   relief="flat", cursor="hand2",
                   command=self.open_options,
                   padx=6, pady=5).pack(side=tk.RIGHT, padx=4)
 
-        search_frame = tk.Frame(bar, bg=DARK)
+        search_frame = tk.Frame(bar, bg=_TOOLBAR_BG)
         search_frame.pack(side=tk.RIGHT, padx=20)
-        tk.Label(search_frame, text="🔍", bg=DARK, fg=SURFACE,
+        tk.Label(search_frame, text="\U0001f50d", bg=_TOOLBAR_BG, fg=_TOOLBAR_FG,
                  font=("Segoe UI", 12)).pack(side=tk.LEFT)
 
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self.refresh_table())
-        tk.Entry(search_frame, textvariable=self.search_var,
-                 font=("Segoe UI", 10), width=26,
-                 relief="flat", bg="#3d4a8a", fg=SURFACE,
-                 insertbackground=SURFACE).pack(side=tk.LEFT, padx=6, ipady=5)
+        self.search_entry = tk.Entry(
+            search_frame, textvariable=self.search_var,
+            font=("Segoe UI", 10), width=26,
+            relief="flat", bg=_SEARCH_BG, fg=_TOOLBAR_FG,
+            insertbackground=_TOOLBAR_FG)
+        self.search_entry.pack(side=tk.LEFT, padx=6, ipady=5)
 
     # ── Main content ──────────────────────────────────────────────────────────
     def _build_main(self):
+        # Status bar packed first (side=BOTTOM) so it is always visible
+        self.status_var = tk.StringVar()
+        self.status_label = tk.Label(self, textvariable=self.status_var,
+                                     bg=BORDER, fg=SUBTEXT, font=("Segoe UI", 9),
+                                     anchor="w", padx=12)
+        self.status_label.pack(fill=tk.X, side=tk.BOTTOM)
+
         main = tk.Frame(self, bg=BG, padx=18, pady=14)
         main.pack(fill=tk.BOTH, expand=True)
 
-        # Filter bar
-        filter_frame = tk.Frame(main, bg=BG)
-        filter_frame.pack(fill=tk.X, pady=(0, 10))
+        # Main notebook: List | Calendar
+        self._main_nb = ttk.Notebook(main)
+        self._main_nb.pack(fill=tk.BOTH, expand=True)
+        self._main_nb.bind("<<NotebookTabChanged>>", self._on_tab_change)
+
+        # ── Tab 1: List ────────────────────────────────────────────────────────
+        list_tab = tk.Frame(self._main_nb, bg=BG)
+        self._main_nb.add(list_tab, text="  \U0001f4cb List  ")
+
+        # Filter bar (multi-select checkboxes)
+        filter_frame = tk.Frame(list_tab, bg=BG)
+        filter_frame.pack(fill=tk.X, pady=(8, 10))
 
         tk.Label(filter_frame, text="Show:", bg=BG, fg=SUBTEXT,
                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 8))
 
-        self.filter_var = tk.StringVar(value="All")
-        for f in ["All"] + STATUS_OPTIONS:
-            color = STATUS_COLORS.get(f, DARK)
-            tk.Radiobutton(
-                filter_frame, text=f, variable=self.filter_var, value=f,
-                command=self.refresh_table,
-                bg=BG, fg=DARK if f == "All" else color,
-                selectcolor=BG, activebackground=BG,
-                font=("Segoe UI", 9, "bold"),
-                relief="flat", cursor="hand2"
+        self._filter_vars = {}
+        self._all_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            filter_frame, text="All", variable=self._all_var,
+            command=self._toggle_all_filters,
+            bg=BG, fg=DARK, selectcolor=SURFACE, activebackground=BG,
+            font=("Segoe UI", 9, "bold"), relief="flat", cursor="hand2"
+        ).pack(side=tk.LEFT, padx=5)
+
+        for s in STATUS_OPTIONS:
+            var = tk.BooleanVar(value=True)
+            color = STATUS_COLORS.get(s, DARK)
+            tk.Checkbutton(
+                filter_frame, text=s, variable=var,
+                command=self._on_filter_change,
+                bg=BG, fg=color, selectcolor=SURFACE, activebackground=BG,
+                font=("Segoe UI", 9, "bold"), relief="flat", cursor="hand2"
             ).pack(side=tk.LEFT, padx=5)
+            self._filter_vars[s] = var
 
         # Table card
-        card = tk.Frame(main, bg=SURFACE, relief="flat",
+        card = tk.Frame(list_tab, bg=SURFACE, relief="flat",
                         highlightthickness=1, highlightbackground=BORDER)
         card.pack(fill=tk.BOTH, expand=True)
 
@@ -378,6 +467,9 @@ class RFQApp(tk.Tk):
         # Right-click menu
         self.ctx = tk.Menu(self, tearoff=0, font=("Segoe UI", 10))
         self.ctx.add_command(label="  Open / Edit",       command=self.open_selected)
+        self.ctx.add_command(label="  Duplicate RFQ",     command=self.duplicate_selected)
+        self.ctx.add_separator()
+        self.ctx.add_command(label="  Add Quick Note",    command=self.quick_note)
         self.ctx.add_separator()
         self.ctx.add_command(label="  Mark Done",          command=lambda: self._quick_status("Done"))
         self.ctx.add_command(label="  Mark In Progress",   command=lambda: self._quick_status("In Progress"))
@@ -386,12 +478,25 @@ class RFQApp(tk.Tk):
         self.ctx.add_command(label="  Delete RFQ",         command=self.delete_selected)
         self.tree.bind("<Button-3>", self._show_ctx)
 
-        # Status bar
-        self.status_var = tk.StringVar()
-        self.status_label = tk.Label(self, textvariable=self.status_var,
-                                     bg=BORDER, fg=SUBTEXT, font=("Segoe UI", 9),
-                                     anchor="w", padx=12)
-        self.status_label.pack(fill=tk.X, side=tk.BOTTOM)
+        # ── Tab 2: Calendar ────────────────────────────────────────────────────
+        cal_tab = tk.Frame(self._main_nb, bg=BG)
+        self._main_nb.add(cal_tab, text="  \U0001f4c5 Calendar  ")
+        self._build_calendar_tab(cal_tab)
+
+    # ── Filter helpers ─────────────────────────────────────────────────────
+    def _toggle_all_filters(self):
+        state = self._all_var.get()
+        for var in self._filter_vars.values():
+            var.set(state)
+        self.refresh_table()
+
+    def _on_filter_change(self):
+        all_on = all(v.get() for v in self._filter_vars.values())
+        self._all_var.set(all_on)
+        self.refresh_table()
+
+    def _get_active_statuses(self):
+        return {s for s, v in self._filter_vars.items() if v.get()}
 
     # ── Table management ──────────────────────────────────────────────────────
     def refresh_table(self):
@@ -399,7 +504,7 @@ class RFQApp(tk.Tk):
             self.tree.delete(row)
 
         search = self.search_var.get().strip().lower()
-        filt   = self.filter_var.get()
+        active = self._get_active_statuses()
         today  = datetime.now().date()
 
         with db_connect() as con:
@@ -409,13 +514,22 @@ class RFQApp(tk.Tk):
             ).fetchall()
 
         shown = 0
+        won_count = 0
+        lost_count = 0
+        row_idx = 0
         for rid, name, company, phone, email, status, date_c, due_date, desc in rows:
-            if filt != "All" and status != filt:
+            if status not in active:
                 continue
             if search and search not in f"{name} {company} {phone} {email} {desc}".lower():
                 continue
 
+            if status == "Won":
+                won_count += 1
+            elif status == "Lost":
+                lost_count += 1
+
             tags = [status.lower().replace(" ", "_")]
+            tags.append("evenrow" if row_idx % 2 == 0 else "oddrow")
             if due_date:
                 try:
                     due_dt = datetime.strptime(due_date, "%Y-%m-%d").date()
@@ -429,20 +543,29 @@ class RFQApp(tk.Tk):
 
             self.tree.insert("", "end", iid=str(rid),
                              values=(status, desc or "", name, company,
-                                     phone or "—", email or "—",
+                                     phone or "\u2014", email or "\u2014",
                                      date_c or "", due_date or ""),
                              tags=tuple(tags))
             shown += 1
+            row_idx += 1
 
         for s, color in STATUS_COLORS.items():
             self.tree.tag_configure(s.lower().replace(" ", "_"), foreground=color)
-        self.tree.tag_configure("overdue",  background="#ffeaea")
-        self.tree.tag_configure("due_soon", background="#fff3e0")
+        self.tree.tag_configure("evenrow", background=SURFACE)
+        self.tree.tag_configure("oddrow",  background=_ROW_ALT)
+        self.tree.tag_configure("overdue",  background=_OVERDUE_BG)
+        self.tree.tag_configure("due_soon", background=_DUE_SOON_BG)
 
-        self.status_var.set(
-            f"   Showing {shown} of {len(rows)} RFQs   |   "
-            f"Click status to change  |  Double-click to open  |  Right-click for more"
-        )
+        # Status bar with win/loss ratio
+        parts = [f"   Showing {shown} of {len(rows)} RFQs"]
+        total_decided = won_count + lost_count
+        if total_decided > 0:
+            pct = won_count / total_decided * 100
+            parts.append(f"Win rate: {pct:.0f}% ({won_count}/{total_decided})")
+        parts.append("Ctrl+N: New  |  Ctrl+F: Search  |  Del: Delete")
+        self.status_var.set("   |   ".join(parts))
+
+        self.refresh_calendar()
 
     _ARCHIVE_STATUSES = {"Done", "Lost"}
 
@@ -458,6 +581,18 @@ class RFQApp(tk.Tk):
         for i, (_, k) in enumerate(data):
             self.tree.move(k, '', i)
         self.tree.heading(col, command=lambda: self._sort_by_column(col, not reverse))
+
+        # Persist sort preference
+        self.settings["sort_column"] = col
+        self.settings["sort_reverse"] = reverse
+        save_settings(self.settings)
+
+    def _apply_saved_sort(self):
+        col = self.settings.get("sort_column", "")
+        reverse = self.settings.get("sort_reverse", False)
+        valid = ("status", "desc", "name", "company", "phone", "email", "date", "due")
+        if col and col in valid:
+            self._sort_by_column(col, reverse)
 
     def _on_tree_click(self, event):
         """Single-click on the Status column opens a quick-change popup."""
@@ -496,6 +631,38 @@ class RFQApp(tk.Tk):
     def open_new_rfq(self):
         RFQDetailWindow(self, None)
 
+    def duplicate_selected(self):
+        """Create a copy of the selected RFQ, opened for editing."""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        rid = int(sel[0])
+        with db_connect() as con:
+            row = con.execute(
+                "SELECT name, company, phone, email, description, due_date "
+                "FROM rfqs WHERE id=?", (rid,)
+            ).fetchone()
+        if not row:
+            return
+        name, company, phone, email, desc, due_date = row
+        win = RFQDetailWindow(self, None)
+        win.title("Duplicate RFQ")
+        win.desc_var.set(desc or "")
+        win.name_var.set(name or "")
+        win.company_var.set(company or "")
+        win.phone_var.set(phone or "")
+        win.email_var.set(email or "")
+        win.due_date_var.set(due_date or "")
+
+    def quick_note(self):
+        """Open a small dialog to add a note to the selected RFQ."""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        rid = int(sel[0])
+        name = self.tree.item(sel[0])["values"][2]
+        QuickNoteDialog(self, rid, name)
+
     def _quick_status(self, status):
         sel = self.tree.selection()
         if not sel:
@@ -521,6 +688,139 @@ class RFQApp(tk.Tk):
             with db_connect() as con:
                 con.execute("DELETE FROM rfqs WHERE id=?", (rid,))
             self.refresh_table()
+
+    # ── Calendar tab ──────────────────────────────────────────────────────────
+    def _build_calendar_tab(self, parent):
+        now = datetime.now()
+        self._cal_year  = now.year
+        self._cal_month = now.month
+
+        # Navigation bar
+        nav = tk.Frame(parent, bg=BG)
+        nav.pack(fill=tk.X, pady=(10, 6), padx=4)
+
+        tk.Button(nav, text=" \u25c0 ", bg=_TOOLBAR_BG, fg=_TOOLBAR_FG,
+                  font=("Segoe UI", 10), relief="flat", cursor="hand2",
+                  command=self._cal_prev, padx=8, pady=4).pack(side=tk.LEFT)
+
+        self._cal_title_var = tk.StringVar()
+        tk.Label(nav, textvariable=self._cal_title_var,
+                 bg=BG, fg=DARK, font=("Segoe UI", 12, "bold"),
+                 width=22, anchor="center").pack(side=tk.LEFT, padx=12)
+
+        tk.Button(nav, text=" \u25b6 ", bg=_TOOLBAR_BG, fg=_TOOLBAR_FG,
+                  font=("Segoe UI", 10), relief="flat", cursor="hand2",
+                  command=self._cal_next, padx=8, pady=4).pack(side=tk.LEFT)
+
+        tk.Button(nav, text=" Today ", bg=ACCENT, fg=_TOOLBAR_FG,
+                  font=("Segoe UI", 9), relief="flat", cursor="hand2",
+                  command=self._cal_today, padx=8, pady=4).pack(side=tk.LEFT, padx=14)
+
+        # Day-of-week header row
+        hdr = tk.Frame(parent, bg=BG)
+        hdr.pack(fill=tk.X, padx=4)
+        for i, d in enumerate(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]):
+            tk.Label(hdr, text=d, bg=_TOOLBAR_BG, fg=_TOOLBAR_FG,
+                     font=("Segoe UI", 9, "bold"), anchor="center",
+                     padx=4, pady=5).grid(row=0, column=i, sticky="ew", padx=1)
+            hdr.grid_columnconfigure(i, weight=1)
+
+        # Calendar grid (rebuilt on each refresh)
+        self._cal_grid_frame = tk.Frame(parent, bg=BG)
+        self._cal_grid_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=(2, 4))
+
+    def refresh_calendar(self):
+        if not hasattr(self, '_cal_grid_frame'):
+            return
+
+        self._cal_title_var.set(
+            f"{_cal_stdlib.month_name[self._cal_month]}  {self._cal_year}"
+        )
+
+        for w in self._cal_grid_frame.winfo_children():
+            w.destroy()
+
+        prefix = f"{self._cal_year}-{self._cal_month:02d}-"
+        with db_connect() as con:
+            rfqs = con.execute(
+                "SELECT id, name, company, status, due_date, description "
+                "FROM rfqs WHERE due_date LIKE ?",
+                (prefix + "%",)
+            ).fetchall()
+
+        day_map = {}
+        for rfq_id, name, company, status, due_date, desc in rfqs:
+            try:
+                day = int(due_date[8:10])
+                day_map.setdefault(day, []).append(
+                    (rfq_id, desc or name or company or "RFQ", status)
+                )
+            except (ValueError, TypeError, IndexError):
+                pass
+
+        today = datetime.now().date()
+        weeks = _cal_stdlib.monthcalendar(self._cal_year, self._cal_month)
+
+        for row_idx, week in enumerate(weeks):
+            self._cal_grid_frame.grid_rowconfigure(row_idx, weight=1, minsize=80)
+            for col_idx, day in enumerate(week):
+                cell_bg = SURFACE if day else _CAL_EMPTY
+                cell = tk.Frame(self._cal_grid_frame, bg=cell_bg,
+                               highlightthickness=1, highlightbackground=BORDER)
+                cell.grid(row=row_idx, column=col_idx, sticky="nsew", padx=2, pady=2)
+
+                if day:
+                    is_today = (
+                        self._cal_year == today.year
+                        and self._cal_month == today.month
+                        and day == today.day
+                    )
+                    tk.Label(cell, text=str(day),
+                             bg=ACCENT if is_today else cell_bg,
+                             fg=_TOOLBAR_FG if is_today else SUBTEXT,
+                             font=("Segoe UI", 9, "bold"),
+                             anchor="ne", padx=4, pady=2).pack(anchor="ne")
+
+                    for rfq_id, label_text, status in day_map.get(day, []):
+                        color = STATUS_COLORS.get(status, DARK)
+                        if len(label_text) > 18:
+                            label_text = label_text[:16] + "\u2026"
+                        badge = tk.Label(cell, text=f" {label_text}",
+                                        bg=color, fg=_TOOLBAR_FG,
+                                        font=("Segoe UI", 8), cursor="hand2",
+                                        anchor="w", pady=2)
+                        badge.pack(fill=tk.X, padx=3, pady=1)
+                        badge.bind("<Button-1>",
+                                   lambda e, _id=rfq_id: RFQDetailWindow(self, _id))
+
+        for col_idx in range(7):
+            self._cal_grid_frame.grid_columnconfigure(col_idx, weight=1)
+
+    def _cal_prev(self):
+        if self._cal_month == 1:
+            self._cal_month = 12
+            self._cal_year -= 1
+        else:
+            self._cal_month -= 1
+        self.refresh_calendar()
+
+    def _cal_next(self):
+        if self._cal_month == 12:
+            self._cal_month = 1
+            self._cal_year += 1
+        else:
+            self._cal_month += 1
+        self.refresh_calendar()
+
+    def _cal_today(self):
+        now = datetime.now()
+        self._cal_year  = now.year
+        self._cal_month = now.month
+        self.refresh_calendar()
+
+    def _on_tab_change(self, event):
+        if hasattr(self, '_main_nb') and self._main_nb.index(self._main_nb.select()) == 1:
+            self.refresh_calendar()
 
     # ── System tray ─────────────────────────────────────────────────────────
     def _setup_tray(self):
@@ -582,7 +882,7 @@ class RFQApp(tk.Tk):
 
     def _show_update_notice(self, version, url):
         self.status_var.set(
-            f"   🔔 Update available: v{version}  —  Click here to download   |   "
+            f"   \U0001f514 Update available: v{version}  \u2014  Click here to download   |   "
             + self.status_var.get()
         )
         self.status_label.configure(cursor="hand2")
@@ -604,7 +904,7 @@ class RFQApp(tk.Tk):
                         for rem_id, name, company in due:
                             send_notification(
                                 "RFQ Reminder",
-                                f"Follow up: {name} – {company or 'No company'}"
+                                f"Follow up: {name} \u2013 {company or 'No company'}"
                             )
                             con.execute(
                                 "UPDATE reminders SET notified=1 WHERE id=?",
@@ -630,10 +930,15 @@ class AutocompleteEntry:
         self.entry.bind("<KeyRelease>", self._on_key)
         self.entry.bind("<FocusOut>", self._schedule_hide)
         self.entry.bind("<Escape>", lambda e: self._hide())
+        self.entry.bind("<Down>", self._on_arrow_down)
+        self.entry.bind("<Up>", self._on_arrow_up)
+        self.entry.bind("<Return>", self._on_enter)
+        self.entry.bind("<space>", self._on_space)
 
     def _on_key(self, event):
         if event.keysym in ("Return", "Tab", "Escape", "Up", "Down",
-                            "Shift_L", "Shift_R", "Control_L", "Control_R"):
+                            "Shift_L", "Shift_R", "Control_L", "Control_R",
+                            "space"):
             return
 
         text = self.entry.get().strip()
@@ -647,12 +952,63 @@ class AutocompleteEntry:
             return
         self._show(matches)
 
+    def _on_arrow_down(self, event):
+        if not self.lb:
+            return
+        cur = self.lb.curselection()
+        if cur:
+            idx = cur[0]
+            if idx < self.lb.size() - 1:
+                self.lb.selection_clear(0, tk.END)
+                self.lb.selection_set(idx + 1)
+                self.lb.see(idx + 1)
+        else:
+            self.lb.selection_set(0)
+            self.lb.see(0)
+        return "break"
+
+    def _on_arrow_up(self, event):
+        if not self.lb:
+            return
+        cur = self.lb.curselection()
+        if cur:
+            idx = cur[0]
+            if idx > 0:
+                self.lb.selection_clear(0, tk.END)
+                self.lb.selection_set(idx - 1)
+                self.lb.see(idx - 1)
+        return "break"
+
+    def _on_enter(self, event):
+        if self.lb and self.lb.curselection():
+            self._accept_selection()
+            return "break"
+
+    def _on_space(self, event):
+        if self.lb and self.lb.curselection():
+            self._accept_selection()
+            return "break"
+
+    def _accept_selection(self):
+        if self._hide_id:
+            self.entry.after_cancel(self._hide_id)
+            self._hide_id = None
+        sel = self.lb.curselection()
+        if sel:
+            value = self.lb.get(sel[0]).strip()
+            self.entry.delete(0, tk.END)
+            self.entry.insert(0, value)
+            if self.on_select:
+                self.on_select(value)
+        self._hide()
+        self.entry.focus_set()
+
     def _show(self, items):
         self._hide()
         toplevel = self.entry.winfo_toplevel()
         self.lb = tk.Listbox(
             toplevel, font=("Segoe UI", 10), bg=SURFACE, fg=DARK,
-            selectbackground="#e8eaf6", relief="solid", bd=1,
+            selectbackground=_SELECTED, relief="solid", bd=1,
             height=min(len(items), 5)
         )
         for item in items:
@@ -689,6 +1045,68 @@ class AutocompleteEntry:
             self.lb = None
 
 
+# ─── Quick Note Dialog ───────────────────────────────────────────────────────
+class QuickNoteDialog(tk.Toplevel):
+    def __init__(self, parent, rfq_id, rfq_name):
+        super().__init__(parent)
+        self.parent = parent
+        self.rfq_id = rfq_id
+        self.title(f"Quick Note \u2014 {rfq_name}")
+
+        w, h = 420, 150
+        self.update_idletasks()
+        px = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
+        py = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+        self.geometry(f"{w}x{h}+{px}+{py}")
+        self.resizable(False, False)
+        self.configure(bg=BG)
+        self.grab_set()
+        self.lift()
+        self.focus_force()
+        self.bind("<Escape>", lambda e: self.destroy())
+
+        tk.Label(self, text="Add a note:", bg=BG, fg=DARK,
+                 font=("Segoe UI", 10)).pack(anchor="w", padx=16, pady=(12, 4))
+
+        self.note_var = tk.StringVar()
+        entry = tk.Entry(self, textvariable=self.note_var,
+                         font=("Segoe UI", 11), relief="solid", bd=1,
+                         bg=SURFACE, fg=DARK)
+        entry.pack(fill=tk.X, padx=16, ipady=5)
+        entry.focus_set()
+        entry.bind("<Return>", lambda e: self._save())
+
+        btn_row = tk.Frame(self, bg=BG)
+        btn_row.pack(fill=tk.X, padx=16, pady=12)
+
+        tk.Button(btn_row, text="  Save  ",
+                  bg=_TOOLBAR_BG, fg=_TOOLBAR_FG,
+                  font=("Segoe UI", 10, "bold"),
+                  relief="flat", cursor="hand2",
+                  command=self._save,
+                  padx=14, pady=5).pack(side=tk.RIGHT)
+
+        tk.Button(btn_row, text="  Cancel  ",
+                  bg=BORDER, fg=DARK,
+                  font=("Segoe UI", 10),
+                  relief="flat", cursor="hand2",
+                  command=self.destroy,
+                  padx=14, pady=5).pack(side=tk.RIGHT, padx=8)
+
+    def _save(self):
+        note = self.note_var.get().strip()
+        if not note:
+            return
+        ts = now_str()
+        with db_connect() as con:
+            con.execute(
+                "INSERT INTO activity (rfq_id, entry, ts) VALUES (?, ?, ?)",
+                (self.rfq_id, note, ts)
+            )
+        self.parent.refresh_table()
+        self.destroy()
+
+
 # ─── RFQ Detail / Edit Window ─────────────────────────────────────────────────
 class RFQDetailWindow(tk.Toplevel):
     def __init__(self, parent, rfq_id):
@@ -698,13 +1116,24 @@ class RFQDetailWindow(tk.Toplevel):
         self.is_new = (rfq_id is None)
 
         self.title("New RFQ" if self.is_new else "RFQ Details")
-        self.geometry("640x570")
-        self.minsize(640, 400)
+        w, h = 660, 720
+        self.update_idletasks()
+        px = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
+        py = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+        # Clamp so the dialog doesn't go off the bottom of the screen
+        screen_h = self.winfo_screenheight()
+        if py + h > screen_h - 40:
+            py = screen_h - h - 40
+        if py < 0:
+            py = 0
+        self.geometry(f"{w}x{h}+{px}+{py}")
+        self.minsize(640, 620)
         self.resizable(True, True)
         self.configure(bg=BG)
         self.grab_set()
         self.lift()
         self.focus_force()
+        self.bind("<Escape>", lambda e: self.destroy())
 
         self._load_data()
         self._build_ui()
@@ -734,11 +1163,11 @@ class RFQDetailWindow(tk.Toplevel):
     # ── Build UI ──────────────────────────────────────────────────────────────
     def _build_ui(self):
         # Header
-        hdr = tk.Frame(self, bg=DARK, padx=18, pady=12)
+        hdr = tk.Frame(self, bg=_TOOLBAR_BG, padx=18, pady=12)
         hdr.pack(fill=tk.X)
         tk.Label(hdr,
-                 text="📋  New RFQ" if self.is_new else "📋  RFQ Details",
-                 bg=DARK, fg=SURFACE,
+                 text="\U0001f4cb  New RFQ" if self.is_new else "\U0001f4cb  RFQ Details",
+                 bg=_TOOLBAR_BG, fg=_TOOLBAR_FG,
                  font=("Segoe UI", 13, "bold")).pack(side=tk.LEFT)
 
         # Buttons (packed first at bottom so they always stay visible)
@@ -746,7 +1175,7 @@ class RFQDetailWindow(tk.Toplevel):
         btn_row.pack(side=tk.BOTTOM, fill=tk.X)
 
         tk.Button(btn_row, text="  Save RFQ  ",
-                  bg=DARK, fg=SURFACE,
+                  bg=_TOOLBAR_BG, fg=_TOOLBAR_FG,
                   font=("Segoe UI", 10, "bold"),
                   relief="flat", cursor="hand2",
                   command=self.save,
@@ -879,7 +1308,7 @@ class RFQDetailWindow(tk.Toplevel):
         self.note_entry.bind("<Return>",   lambda _: self.add_activity())
 
         tk.Button(add_row, text=" Add Note ",
-                  bg=ACCENT, fg=SURFACE,
+                  bg=ACCENT, fg=_TOOLBAR_FG,
                   font=("Segoe UI", 9, "bold"),
                   relief="flat", cursor="hand2",
                   command=self.add_activity,
@@ -946,7 +1375,7 @@ class RFQDetailWindow(tk.Toplevel):
                  bg=SURFACE, fg=DARK).pack(side=tk.LEFT, padx=8, ipady=4)
 
         tk.Button(row, text=" Set Reminder ",
-                  bg=GREEN, fg=SURFACE,
+                  bg=GREEN, fg=_TOOLBAR_FG,
                   font=("Segoe UI", 9, "bold"),
                   relief="flat", cursor="hand2",
                   command=self.add_reminder,
@@ -963,11 +1392,11 @@ class RFQDetailWindow(tk.Toplevel):
         self.rem_lb = tk.Listbox(
             list_frame, font=("Segoe UI", 10),
             bg=SURFACE, fg=DARK, relief="flat",
-            selectbackground="#e8eaf6", bd=0, activestyle="none", height=6)
+            selectbackground=_SELECTED, bd=0, activestyle="none", height=6)
         self.rem_lb.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
 
         tk.Button(tab, text=" Delete Selected Reminder ",
-                  bg=DANGER, fg=SURFACE,
+                  bg=DANGER, fg=_TOOLBAR_FG,
                   font=("Segoe UI", 9),
                   relief="flat", cursor="hand2",
                   command=self.delete_reminder,
@@ -979,7 +1408,7 @@ class RFQDetailWindow(tk.Toplevel):
     def _refresh_reminders(self):
         self.rem_lb.delete(0, tk.END)
         for _, remind_at, notified in self.rem_data:
-            icon = "✓ Sent" if notified else "⏰ Pending"
+            icon = "\u2713 Sent" if notified else "\u23f0 Pending"
             self.rem_lb.insert(tk.END, f"  {remind_at}    {icon}")
 
     # ── Data actions ──────────────────────────────────────────────────────────
@@ -1159,7 +1588,7 @@ class RFQDetailWindow(tk.Toplevel):
                     con.execute(
                         "INSERT INTO activity (rfq_id, entry, ts) VALUES (?, ?, ?)",
                         (self.rfq_id,
-                         f"Status changed: {old_status} → {status}", ts)
+                         f"Status changed: {old_status} \u2192 {status}", ts)
                     )
 
         self.parent.refresh_table()
@@ -1172,22 +1601,23 @@ class OptionsWindow(tk.Toplevel):
         super().__init__(parent)
         self.parent = parent
         self.title("Options")
-        self.geometry("460x340")
-        self.minsize(400, 300)
+        self.geometry("460x400")
+        self.minsize(400, 360)
         self.resizable(False, False)
         self.configure(bg=BG)
         self.grab_set()
         self.lift()
         self.focus_force()
+        self.bind("<Escape>", lambda e: self.destroy())
 
         self.settings = dict(parent.settings)
         self._build_ui()
 
     def _build_ui(self):
         # Header
-        hdr = tk.Frame(self, bg=DARK, padx=18, pady=12)
+        hdr = tk.Frame(self, bg=_TOOLBAR_BG, padx=18, pady=12)
         hdr.pack(fill=tk.X)
-        tk.Label(hdr, text="⚙  Options", bg=DARK, fg=SURFACE,
+        tk.Label(hdr, text="\u2699  Options", bg=_TOOLBAR_BG, fg=_TOOLBAR_FG,
                  font=("Segoe UI", 13, "bold")).pack(side=tk.LEFT)
 
         # Buttons (packed at bottom first so they always show)
@@ -1195,7 +1625,7 @@ class OptionsWindow(tk.Toplevel):
         btn_row.pack(side=tk.BOTTOM, fill=tk.X)
 
         tk.Button(btn_row, text="  Save  ",
-                  bg=DARK, fg=SURFACE,
+                  bg=_TOOLBAR_BG, fg=_TOOLBAR_FG,
                   font=("Segoe UI", 10, "bold"),
                   relief="flat", cursor="hand2",
                   command=self._save,
@@ -1243,6 +1673,16 @@ class OptionsWindow(tk.Toplevel):
             tk.Label(content, text="(Install pystray + pillow for tray support)",
                      bg=BG, fg=DANGER, font=("Segoe UI", 8)).pack(anchor="w", padx=24)
 
+        # Separator
+        tk.Frame(content, bg=BORDER, height=1).pack(fill=tk.X, pady=10)
+
+        # Dark Mode
+        self.dark_mode_var = tk.BooleanVar(value=self.settings.get("dark_mode", False))
+        self._add_option(content,
+                         self.dark_mode_var,
+                         "Dark mode",
+                         "Use dark color scheme (app will restart to apply)")
+
     def _add_option(self, parent, var, title, subtitle):
         frame = tk.Frame(parent, bg=BG)
         frame.pack(fill=tk.X, pady=(4, 0))
@@ -1260,18 +1700,31 @@ class OptionsWindow(tk.Toplevel):
         return cb
 
     def _save(self):
+        old_dark = self.settings.get("dark_mode", False)
+
         self.settings["start_with_windows"] = self.startup_var.get()
         self.settings["minimize_to_tray"] = self.min_tray_var.get()
         self.settings["close_to_tray"] = self.close_tray_var.get()
+        self.settings["dark_mode"] = self.dark_mode_var.get()
 
         save_settings(self.settings)
         set_startup(self.settings["start_with_windows"])
         self.parent.settings = self.settings
-        self.destroy()
+
+        if self.settings["dark_mode"] != old_dark:
+            self.parent._restart = True
+            self.parent._quit_app()
+        else:
+            self.destroy()
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     init_db()
-    app = RFQApp()
-    app.mainloop()
+    while True:
+        settings = load_settings()
+        apply_theme(DARK_THEME if settings.get("dark_mode") else LIGHT_THEME)
+        app = RFQApp()
+        app.mainloop()
+        if not getattr(app, '_restart', False):
+            break
