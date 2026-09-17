@@ -218,6 +218,22 @@ function handle(channel, fn) {
   });
 }
 
+/**
+ * Keeps the HKCU Run entry in step with the setting.
+ *
+ * Called from everywhere the setting can change, not just from the options
+ * handler: the legacy import also carries "start with Windows" across from the
+ * old app, and writing that to settings.json without touching the registry
+ * leaves the two disagreeing until the next launch.
+ */
+function applyStartup() {
+  // Electron names the value after the AppUserModelID, so the installed build
+  // and a dev run from source compete for the same entry. Only what is running
+  // now wins, which is correct - but it is why running from source with a
+  // profile that has this on will point login at node_modules.
+  app.setLoginItemSettings({ openAtLogin: store.get().startWithWindows });
+}
+
 function state() {
   const settings = store.get();
   return {
@@ -243,16 +259,8 @@ function state() {
 handle(C.GET_STATE, () => state());
 
 handle(C.SET_SETTINGS, (patch) => {
-  const before = store.get().startWithWindows;
-  const settings = store.update(patch);
-
-  if (settings.startWithWindows !== before) {
-    // Electron writes the same HKCU\...\Run value the tkinter app did, so the
-    // two never fight over it - whichever ran last wins, which is what the user
-    // just asked for.
-    app.setLoginItemSettings({ openAtLogin: settings.startWithWindows });
-  }
-
+  store.update(patch);
+  applyStartup();
   return state();
 });
 
@@ -311,6 +319,11 @@ handle(C.IMPORT_LEGACY, async ({ path: given } = {}) => {
 
   const res = importLegacy(file, db, store);
   if (!res.ok) return res;
+
+  // The import brings the old app's preferences with it, and one of them is a
+  // registry entry rather than a line in a file.
+  applyStartup();
+
   return { ...res, state: state() };
 });
 
@@ -339,9 +352,9 @@ if (!app.requestSingleInstanceLock()) {
     store = new Store(dir);
     db = new Db(dir);
 
-    // Keep the registry in step with the setting on every launch: an installer,
-    // a profile copy or a manual edit can leave the two disagreeing.
-    app.setLoginItemSettings({ openAtLogin: store.get().startWithWindows });
+    // Also on every launch: an installer, a profile copy or a dev run from
+    // source can leave the registry and the setting disagreeing.
+    applyStartup();
 
     createWindow();
     createTray();
