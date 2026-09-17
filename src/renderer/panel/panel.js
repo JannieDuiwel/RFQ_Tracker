@@ -315,12 +315,20 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-App.api.onUpdateAvailable(({ version, url }) => {
+/**
+ * Shown from two places - the event, and the state snapshot at boot - because
+ * the check in main can finish on either side of this window being ready.
+ * Assigning onclick rather than adding a listener keeps a second call from
+ * opening the browser twice.
+ */
+function showUpdate({ version, url }) {
   const btn = el('update');
   btn.hidden = false;
   btn.innerHTML = `${App.icon('bell')} Version ${esc(version)} is available — download`;
-  btn.addEventListener('click', () => App.api.openExternal(url));
-});
+  btn.onclick = () => App.api.openExternal(url);
+}
+
+App.api.onUpdateAvailable(showUpdate);
 
 App.api.onNewRfq((payload) => {
   if (payload.openRfqId) Detail.open(payload.openRfqId);
@@ -338,6 +346,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyTheme();
   renderFilters();
   renderImportNotice();
+  // The check may already have finished while this window was loading.
+  if (res.update) showUpdate(res.update);
   ListView.init();
   CalendarView.init();
   await App.refresh();

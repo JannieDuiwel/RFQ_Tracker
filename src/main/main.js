@@ -30,6 +30,9 @@ let store = null;
 let db = null;
 let reminders = null;
 
+/** { version, url } once a newer release has been seen, else null. */
+let update = null;
+
 /**
  * Set before any window exists. Windows matches this against the AppUserModelID
  * baked into the installed shortcut to decide whose name and icon appear on a
@@ -223,6 +226,7 @@ function state() {
     statuses: STATUSES,
     statusColors: STATUS_COLORS,
     version: app.getVersion(),
+    update,
     // Empty unless there is an old database sitting somewhere obvious and it
     // has never been imported. The renderer turns it into an offer, once.
     legacyCandidate: (!settings.legacyImported && db.all().length === 0)
@@ -347,7 +351,14 @@ if (!app.requestSingleInstanceLock()) {
 
     if (store.get().checkForUpdates) {
       checkForUpdate(app.getVersion()).then((res) => {
-        if (res.available) send(C.UPDATE_AVAILABLE, { version: res.version, url: res.url });
+        if (!res.available) return;
+        // Remembered as well as sent. The renderer registers its listener when
+        // its scripts run, and on a fast connection GitHub can answer before
+        // that - a send() to a page that is not listening yet goes nowhere and
+        // the notice never appears. Holding it here means the renderer picks it
+        // up from getState() instead, whichever of the two wins the race.
+        update = { version: res.version, url: res.url };
+        send(C.UPDATE_AVAILABLE, update);
       });
     }
 
