@@ -1,0 +1,38 @@
+appId: com.janherman.rfqtracker
+productName: RFQ Tracker
+copyright: Copyright © 2026 Jan-Herman Schlechter
+
+directories:
+  output: dist
+  buildResources: src/assets
+
+files:
+  - src/**/*
+  - package.json
+  - "!**/*.map"
+  - "!tools/**"
+
+# Nothing native to unpack: the data store is JSON written with node's own fs,
+# and the one-time importer reads the old .db through node:sqlite, which is
+# built into the Node that Electron already ships.
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: src/assets/icon-512.png
+  artifactName: ${productName}-${version}-setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: RFQ Tracker
+  runAfterFinish: true
+  # The installed shortcut carries this AppUserModelID, and main.js sets the
+  # same string. Windows matches the two to decide whose name and icon appear
+  # on a toast - without it, reminder notifications show up as "Electron".
+  deleteAppDataOnUninstall: false

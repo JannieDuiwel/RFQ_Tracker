@@ -1,0 +1,23 @@
+{
+  "name": "rfq-tracker",
+  "productName": "RFQ Tracker",
+  "version": "2.0.0",
+  "description": "Track Requests for Quote - contacts, status, due dates, activity log and reminders. Local-first, no account, no server.",
+  "main": "src/main/main.js",
+  "author": "Jan-Herman Schlechter",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "icons": "node tools/make-icons.js",
+    "postinstall": "node tools/make-icons.js",
+    "build": "npm run icons && electron-builder --win --x64",
+    "test": "node test/store.test.js && node test/db.test.js && node test/query.test.js && node test/reminders.test.js && node test/legacy-import.test.js && node test/updates.test.js"
+  },
+  "devDependencies": {
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {}
+}

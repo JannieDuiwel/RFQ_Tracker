@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<!--
+  Lock the renderer down. default-src 'none' means nothing loads unless a
+  directive below allows it, so a stray <img src="http://..."> or an injected
+  <script src> simply fails instead of reaching the network.
+
+  This app needs no network access at all from the renderer: the one thing that
+  talks to GitHub is main, and it hands back a version string.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+<title>RFQ Tracker</title>
+<style>
+  /*
+    Tokens first, so a rebrand is one block rather than a search-and-replace.
+    The values are the tkinter app's palette, carried over deliberately: someone
+    who has used it every day for six months should recognise the table at a
+    glance and not have to relearn what a colour means.
+  */
+  :root {
+    --bg: #f4f6fb;
+    --surface: #ffffff;
+    --row-alt: #f7f8fc;
+    --text: #2d3561;
+    --dim: #636e72;
+    --line: #dfe6e9;
+    --accent: #6c5ce7;
+    --good: #00b894;
+    --bad: #e17055;
+    --bar-bg: #2d3561;
+    --bar-fg: #ffffff;
+    --field-bar: #3d4a8a;
+    --selected: #e8eaf6;
+    --hover: #eef0f8;
+    --overdue: #ffeaea;
+    --due-soon: #fff3e0;
+    --shadow: 0 10px 30px rgba(45, 53, 97, .18);
+    --radius: 10px;
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #1e1e2e;
+    --surface: #2a2a3d;
+    --row-alt: #252538;
+    --text: #e0e0ef;
+    --dim: #a0a0b8;
+    --line: #3a3a50;
+    --accent: #9d8cff;
+    --good: #00d9a3;
+    --bad: #ff6b6b;
+    --bar-bg: #151525;
+    --bar-fg: #e0e0ef;
+    --field-bar: #3a3a50;
+    --selected: #3d3d5c;
+    --hover: #32324a;
+    --overdue: #3d2020;
+    --due-soon: #3d3520;
+    --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  }
+
+  * { box-sizing: border-box; }
+
+  /*
+    A class rule such as `.row { display: flex }` outranks the UA stylesheet's
+    [hidden] { display: none }, so any element toggled via the hidden attribute
+    stays stubbornly visible. This puts the attribute back in charge. Keep it.
+  */
+  [hidden] { display: none !important; }
+
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+
+  body { display: flex; flex-direction: column; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  ::selection { background: var(--accent); color: #fff; }
+
+  /* --- toolbar ---------------------------------------------------------- */
+
+  .toolbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 18px;
+    background: var(--bar-bg); color: var(--bar-fg);
+    flex: none;
+  }
+  .brand { font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+  .brand .v { font-size: 11px; opacity: .55; font-weight: 400; margin-left: 6px; }
+  .spacer { flex: 1; }
+
+  .search {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--field-bar); border-radius: 8px; padding: 0 10px;
+  }
+  .search input {
+    background: none; border: 0; outline: none; color: var(--bar-fg);
+    padding: 7px 0; width: 240px;
+  }
+  .search input::placeholder { color: var(--bar-fg); opacity: .5; }
+
+  .btn {
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 12px; cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) { border-color: var(--accent); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.primary { background: var(--good); border-color: var(--good); color: #fff; font-weight: 600; }
+  .btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .btn.icon { padding: 7px 10px; }
+  .btn.ghost { background: transparent; color: var(--bar-fg); border-color: transparent; }
+  .btn.ghost:hover { background: rgba(255, 255, 255, .12); }
+
+  /* --- tabs and views --------------------------------------------------- */
+
+  .tabs { display: flex; gap: 2px; padding: 10px 18px 0; background: var(--bg); flex: none; }
+  .tab {
+    background: var(--line); color: var(--dim); border: 0;
+    padding: 8px 18px; border-radius: 8px 8px 0 0; cursor: pointer;
+  }
+  .tab[aria-selected="true"] { background: var(--surface); color: var(--text); font-weight: 600; }
+
+  main { flex: 1; min-height: 0; padding: 0 18px 12px; display: flex; }
+  .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+  .filters {
+    display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+    padding: 10px 2px;
+  }
+  .filters .label { color: var(--dim); margin-right: 4px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--line); background: var(--surface);
+    border-radius: 999px; padding: 4px 12px 4px 8px; cursor: pointer;
+    font-weight: 600; color: var(--dim); user-select: none;
+  }
+  .chip input { margin: 0; accent-color: var(--accent); }
+  .chip[data-on="true"] { color: var(--chip, var(--text)); border-color: currentColor; }
+
+  /* --- table ------------------------------------------------------------ */
+
+  .table-wrap {
+    flex: 1; min-height: 0; overflow: auto;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius);
+    /*
+      Chromium's scroll anchoring tries to keep whatever is above the viewport
+      in place when content changes. Replacing the whole tbody on every refresh
+      is exactly the case it guesses wrong about, and it nudges the list down by
+      a row each time. list.js restores the scroll position itself.
+    */
+    overflow-anchor: none;
+  }
+  /*
+    Fixed layout: the column widths in list.js are honoured exactly, cells
+    ellipsise rather than stretching the table, and the browser does not have to
+    measure every row before it can paint the first one.
+  */
+  table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+
+  thead th {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--bar-bg); color: var(--bar-fg);
+    text-align: left; font-size: 12px; font-weight: 600;
+    padding: 10px 12px; cursor: pointer; white-space: nowrap;
+    border-bottom: 1px solid var(--line);
+  }
+  thead th:hover { filter: brightness(1.25); }
+  thead th .arrow { opacity: .55; margin-left: 4px; font-size: 10px; }
+
+  tbody td {
+    padding: 8px 12px; border-bottom: 1px solid var(--line);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /*
+    Striping by :nth-child means the stripes follow the DOM, which is the sort
+    order. The tkinter version had to walk the tree and re-tag every row after
+    each sort to keep them from scrambling.
+  */
+  tbody tr:nth-child(even) { background: var(--row-alt); }
+  tbody tr:hover { background: var(--hover); }
+  tbody tr[aria-selected="true"] { background: var(--selected); }
+  tbody tr.overdue { background: var(--overdue); }
+  tbody tr.due-soon { background: var(--due-soon); }
+  tbody tr { cursor: default; }
+
+  /*
+    Flashed when a row moves under you - marking something Done sinks it to the
+    bottom of the current sort, and without a trace of where it went that reads
+    as the list having scrambled itself.
+
+    An inset shadow rather than a background, so it layers over the zebra
+    striping and the overdue tint instead of replacing them.
+  */
+  @keyframes row-moved {
+    from { box-shadow: inset 0 0 0 9999px color-mix(in srgb, var(--accent) 40%, transparent); }
+    to { box-shadow: inset 0 0 0 9999px transparent; }
+  }
+  tbody tr.moved td { animation: row-moved 1200ms ease-out; }
+
+  /*
+    The cell is sized to the pill, so it must not try to ellipsise it - a fixed
+    table layout otherwise renders "Quoted…" with the dots outside the border.
+  */
+  td.status-cell { text-overflow: clip; padding: 6px 10px; }
+  .pill {
+    display: block; width: 100%; text-align: center;
+    border: 1px solid currentColor; border-radius: 999px;
+    padding: 2px 6px; font-size: 12px; font-weight: 600;
+    background: transparent; cursor: pointer;
+  }
+  .pill:hover { background: currentColor; }
+  .pill:hover span { color: var(--surface); }
+
+  td.muted { color: var(--dim); }
+  .badge {
+    display: inline-block; margin-left: 6px; font-size: 11px;
+    color: var(--dim);
+  }
+  .empty { padding: 40px 20px; text-align: center; color: var(--dim); }
+
+  /* --- calendar --------------------------------------------------------- */
+
+  .cal-nav { display: flex; align-items: center; gap: 10px; padding: 10px 2px; }
+  .cal-title { font-size: 15px; font-weight: 600; min-width: 190px; text-align: center; }
+  .cal-head, .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .cal-head div {
+    background: var(--bar-bg); color: var(--bar-fg);
+    text-align: center; padding: 6px; font-weight: 600; font-size: 12px;
+    border-radius: 6px 6px 0 0;
+  }
+  .cal-grid { flex: 1; min-height: 0; margin-top: 4px; grid-auto-rows: 1fr; overflow: auto; }
+  .cal-cell {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px; min-height: 84px;
+    display: flex; flex-direction: column; gap: 3px; overflow: hidden;
+  }
+  .cal-cell.blank { background: var(--row-alt); border-style: dashed; }
+  .cal-day { align-self: flex-end; color: var(--dim); font-weight: 600; font-size: 12px; }
+  .cal-cell.today .cal-day {
+    background: var(--accent); color: #fff; border-radius: 999px;
+    min-width: 20px; text-align: center;
+  }
+  .cal-item {
+    border: 0; border-radius: 4px; color: #fff; font-size: 11px;
+    padding: 3px 6px; text-align: left; cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cal-item:hover { filter: brightness(1.12); }
+
+  /* --- status bar ------------------------------------------------------- */
+
+  .statusbar {
+    flex: none; display: flex; align-items: center; gap: 16px;
+    padding: 6px 18px; background: var(--line); color: var(--dim);
+    font-size: 12px;
+  }
+  .statusbar .keys { margin-left: auto; opacity: .8; }
+  .update-link {
+    background: none; border: 0; color: var(--accent);
+    font-weight: 600; cursor: pointer; padding: 0;
+  }
+
+  /* --- context menu ----------------------------------------------------- */
+
+  .menu {
+    position: fixed; z-index: 50; min-width: 190px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 8px; box-shadow: var(--shadow); padding: 5px;
+  }
+  .menu button {
+    display: block; width: 100%; text-align: left;
+    background: none; border: 0; border-radius: 6px;
+    padding: 7px 10px; cursor: pointer; color: var(--text);
+  }
+  .menu button:hover { background: var(--hover); }
+  .menu hr { border: 0; border-top: 1px solid var(--line); margin: 5px 2px; }
+
+  /* --- dialogs ---------------------------------------------------------- */
+
+  dialog {
+    padding: 0; border: 1px solid var(--line); border-radius: 12px;
+    background: var(--bg); color: var(--text);
+    box-shadow: var(--shadow); max-width: 92vw;
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, .45); }
+  .dlg-head {
+    background: var(--bar-bg); color: var(--bar-fg);
+    padding: 12px 18px; font-size: 14px; font-weight: 600;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .dlg-body { padding: 16px 18px; }
+  .dlg-foot {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding: 12px 18px; border-top: 1px solid var(--line);
+  }
+  .dlg-foot .left { margin-right: auto; }
+
+  .field { margin-bottom: 10px; }
+  .field label {
+    display: block; margin-bottom: 4px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--dim);
+  }
+  .field input, .field select, .field textarea {
+    width: 100%; padding: 8px 10px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 8px; outline: none;
+  }
+  .field input:focus, .field select:focus { border-color: var(--accent); }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .hint { color: var(--dim); font-size: 12px; margin-top: 4px; }
+  .error { color: var(--bad); font-size: 12px; min-height: 18px; }
+
+  /* Autocomplete list, positioned under its input. */
+  .ac-wrap { position: relative; }
+  .ac {
+    position: absolute; z-index: 30; left: 0; right: 0; top: 100%;
+    margin: 2px 0 0; padding: 4px; list-style: none;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 8px; box-shadow: var(--shadow); max-height: 210px; overflow: auto;
+  }
+  .ac li { padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+  .ac li[aria-selected="true"], .ac li:hover { background: var(--selected); }
+
+  .dlg-tabs { display: flex; gap: 2px; padding: 12px 18px 0; }
+  .log {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px; height: 280px; overflow: auto;
+  }
+  .log .entry { margin-bottom: 10px; }
+  .log .ts { color: var(--accent); font-size: 11px; }
+  .log .body { white-space: pre-wrap; word-break: break-word; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > .grow { flex: 1; }
+
+  .rem-list { list-style: none; margin: 8px 0 0; padding: 0; }
+  .rem-list li {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 10px; margin-bottom: 6px;
+  }
+  .rem-list .when { font-variant-numeric: tabular-nums; }
+  .rem-list .sent { color: var(--good); font-size: 12px; }
+  .rem-list .pending { color: var(--dim); font-size: 12px; }
+
+  .toggle { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; }
+  .toggle input { margin: 3px 0 0; accent-color: var(--accent); }
+  .toggle .title { font-weight: 600; }
+  .toggle .sub { color: var(--dim); font-size: 12px; }
+  .sep { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
+
+  .notice {
+    display: flex; gap: 12px; align-items: center;
+    background: var(--surface); border: 1px solid var(--accent);
+    border-radius: var(--radius); padding: 12px 14px; margin-bottom: 10px;
+  }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%);
+    background: var(--bar-bg); color: var(--bar-fg);
+    padding: 9px 16px; border-radius: 999px; box-shadow: var(--shadow);
+    z-index: 60; max-width: 70vw; text-align: center;
+  }
+  .toast.bad { background: var(--bad); color: #fff; }
+</style>
+</head>
+<body>
+
+<header class="toolbar">
+  <div class="brand">&#128203; RFQ Tracker<span class="v" id="version"></span></div>
+  <div class="spacer"></div>
+  <div class="search">
+    <span aria-hidden="true">&#128269;</span>
+    <input type="search" id="search" placeholder="Search name, company, phone, email&hellip;"
+           autocomplete="off" spellcheck="false" />
+  </div>
+  <button class="btn ghost icon" id="options" title="Options">&#9881;</button>
+  <button class="btn primary" id="new-rfq">+ New RFQ</button>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab" role="tab" id="tab-list" aria-selected="true">&#128203; List</button>
+  <button class="tab" role="tab" id="tab-calendar" aria-selected="false">&#128197; Calendar</button>
+</nav>
+
+<main>
+  <section class="view" id="view-list">
+    <div class="notice" id="import-notice" hidden>
+      <div class="grow">
+        <div><strong>Coming from the old RFQ Tracker?</strong></div>
+        <div class="hint" id="import-path"></div>
+      </div>
+      <button class="btn accent" id="import-now">Import</button>
+      <button class="btn" id="import-pick">Choose file&hellip;</button>
+      <button class="btn" id="import-dismiss">Not now</button>
+    </div>
+
+    <div class="filters" id="filters">
+      <span class="label">Show:</span>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <colgroup id="cols"></colgroup>
+        <thead><tr id="head-row"></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="empty" id="empty" hidden></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-calendar" hidden>
+    <div class="cal-nav">
+      <button class="btn icon" id="cal-prev" title="Previous month">&#9664;</button>
+      <div class="cal-title" id="cal-title"></div>
+      <button class="btn icon" id="cal-next" title="Next month">&#9654;</button>
+      <button class="btn accent" id="cal-today">Today</button>
+      <span class="hint">RFQs appear on their due date. Click one to open it.</span>
+    </div>
+    <div class="cal-head">
+      <div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div>
+      <div>Fri</div><div>Sat</div><div>Sun</div>
+    </div>
+    <div class="cal-grid" id="cal-grid"></div>
+  </section>
+</main>
+
+<footer class="statusbar">
+  <span id="counts"></span>
+  <span id="winrate"></span>
+  <button class="update-link" id="update" hidden></button>
+  <span class="keys">Ctrl+N new &middot; Ctrl+F search &middot; Del delete</span>
+</footer>
+
+<div class="menu" id="menu" hidden></div>
+
+<script src="panel.js"></script>
+<script src="list.js"></script>
+<script src="calendar.js"></script>
+<script src="detail.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

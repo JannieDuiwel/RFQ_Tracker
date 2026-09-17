@@ -1,39 +1,120 @@
-# RFQ Tracker Pro
+# RFQ Tracker
 
-Track your Requests for Quote — never miss a follow-up again.
+Track Requests for Quote — who asked, what for, where it got to, and what you
+promised to do about it by Friday.
 
-## Features
-- Add RFQs with name, company, phone, email, and optional due date
-- **Auto-fill** — type a company or contact name and get suggestions from previous RFQs
-- Status tracking: Pending → In Progress → Quoted → Won / Lost / Done
-- **Due date tracking** with color-coded urgency (overdue = red, due soon = orange)
-- Activity Log tab — add timestamped notes, quote numbers, follow-up details
-- Reminders tab — set Windows notification reminders per RFQ
-- Search, filter by status, and **click column headers to sort**
-- Right-click quick-status update
-- **System tray** — minimize or close to tray to keep app running
-- **Options** — start with Windows, minimize/close to tray settings
-- **Auto-update checker** — notifies you when a new version is available on GitHub
-- All data saved locally in a `.db` file next to the app
+A local Windows desktop app. No account, no server, no subscription: the RFQs
+live in a file on your machine, and the only time the app touches the network is
+to ask GitHub whether there is a newer release — which you can turn off.
 
-## How to Build the .exe
+Version 2 is a rewrite of the original Python/tkinter app on the
+[Electron foundation](https://github.com/JannieDuiwel/Beeld/blob/master/FOUNDATION.md)
+shared with Vloei and Beeld. Everything the old version did, it still does; the
+old database imports on first run.
 
-**Requirements:** Python 3.9+ installed on a Windows PC.
+---
 
-1. Open Command Prompt in this folder
-2. Double-click **BUILD.bat** (or run it in Command Prompt)
-3. Wait ~1-2 minutes
-4. Your app appears in the `dist/` folder as **`RFQ Tracker Pro.exe`**
+## Install
 
-You can copy that `.exe` anywhere and share it with co-workers.
-No installation needed — just double-click and run.
+Download the latest `RFQ Tracker-<version>-setup.exe` from
+[Releases](https://github.com/JannieDuiwel/RFQ_Tracker/releases) and run it. It
+installs per-user, so it needs no administrator password, and it puts a shortcut
+on the desktop and in the Start menu.
 
-> **Note:** Each person gets their own database file saved next to their copy of the .exe.
+**Coming from version 1?** The first launch offers to import the old
+`rfq_tracker.db` if it finds one on the desktop, in Documents, in Downloads or in
+your user folder. If it is somewhere else, point at it with **Options → Import
+from the old RFQ Tracker**. The import reads that file and never writes to it, so
+the old app keeps working until you are satisfied this one does.
 
-## Windows Notifications
-The app checks for due reminders every 60 seconds while running.
-Make sure the app is open (or minimized to tray) for notifications to fire.
+---
 
-## Releases
-Download the latest `.exe` from the [Releases](https://github.com/JannieDuiwel/RFQ_Tracker/releases) page.
-The app will notify you in the status bar when a new version is available.
+## What it does
+
+- **RFQs** with a description, contact, company, phone, email, creation date and
+  optional due date.
+- **Status** through the lifecycle: Pending → In Progress → Quoted → Won / Lost /
+  Done. Click the status pill on any row to change it in one move.
+- **Autofill** — start typing a contact or company you have quoted before and the
+  rest of their details fill themselves in. It never overwrites something you
+  have already typed.
+- **Due dates**, coloured by urgency: overdue in red, due within a few days in
+  orange. How many days counts as "soon" is a setting.
+- **Activity log** per RFQ — timestamped notes, quote numbers, what was said on
+  the phone. Status changes write themselves into it.
+- **Reminders** per RFQ, delivered as Windows notifications. One missed while the
+  app was closed fires when it next opens, because the follow-up is still owed.
+- **Calendar** view of everything due this month.
+- **Search and filter** across every field, with column sorting that keeps
+  finished work at the bottom where it belongs.
+- **Win rate** in the status bar: Won over Won plus Lost, ignoring everything
+  still in flight.
+- **System tray** — minimise or close to the tray to keep reminders running.
+
+Keyboard: `Ctrl+N` new RFQ, `Ctrl+F` search, `Enter` open the selected row,
+`Delete` delete it, `Ctrl+S` save inside the editor, `Esc` close a dialog.
+
+---
+
+## Where the data lives
+
+```
+%APPDATA%\RFQ Tracker\rfqs.json        every RFQ, its notes and its reminders
+%APPDATA%\RFQ Tracker\settings.json    preferences only
+```
+
+Both are plain JSON, written atomically — a crash mid-save cannot leave a
+truncated file. `rfqs.json` is the backup: copy it somewhere, and copying it back
+restores everything.
+
+Version 1 kept a SQLite database beside the `.exe`, which meant reinstalling the
+app could put it somewhere you did not expect to find your data. Version 2 keeps
+it in your user profile instead, where it belongs and where it survives an
+upgrade.
+
+---
+
+## Development
+
+```
+npm install     # also generates the icons
+npm start       # run it
+npm run dev     # run it with devtools and renderer errors in the terminal
+npm test        # plain node + assert, no runner, under a second
+npm run build   # produces dist\RFQ Tracker-<version>-setup.exe
+```
+
+No build step and no framework: the renderer is plain DOM, so a clone runs with
+nothing to compile.
+
+### Layout
+
+```
+src/
+  main/       Node. Window, tray, lifecycle, IPC, and the app's own logic.
+    store.js         preferences
+    db.js            the RFQs - reads, writes, the list query
+    reminders.js     the minute poll that fires due reminders
+    updates.js       the GitHub release check
+    legacy-import.js the one-time read of version 1's SQLite database
+  preload/    The entire surface the renderer may touch. The security boundary.
+  renderer/   panel/ - index.html plus one file per part of the window.
+  shared/     channels.js, statuses.js, dates.js - needed on both sides.
+tools/        make-icons.js. Excluded from the packaged app.
+test/         Plain node + assert.
+```
+
+Everything under `src/main` except `main.js` itself is plain Node that a test can
+drive without booting Electron. That one rule is what keeps `npm test` fast and
+dependency-free — and the app ships with **zero runtime dependencies**.
+
+The conventions, and the Windows/Electron traps worth not rediscovering, are
+written up in [FOUNDATION.md](https://github.com/JannieDuiwel/Beeld/blob/master/FOUNDATION.md).
+
+### Why JSON rather than SQLite
+
+The working set is tens to low hundreds of RFQs. At that size a scan in
+JavaScript costs less than the IPC round trip that delivers the result, so SQL
+would buy indexes nobody needs at the price of either an experimental Node API or
+a native module that has to be rebuilt for every Electron version. The old `.db`
+is still read once, by the importer, and then left alone.
