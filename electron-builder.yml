@@ -3,7 +3,10 @@ productName: RFQ Tracker
 copyright: Copyright © 2026 Jan-Herman Schlechter
 
 directories:
-  output: dist
+  # Deliberately NOT dist/. That folder is where the tkinter version kept its
+  # .exe and its live rfq_tracker.db, and a build that cleans its own output
+  # directory would take the user's data with it.
+  output: out
   buildResources: src/assets
 
 files:

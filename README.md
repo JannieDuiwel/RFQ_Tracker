@@ -81,7 +81,7 @@ npm install     # also generates the icons
 npm start       # run it
 npm run dev     # run it with devtools and renderer errors in the terminal
 npm test        # plain node + assert, no runner, under a second
-npm run build   # produces dist\RFQ Tracker-<version>-setup.exe
+npm run build   # produces out\RFQ Tracker-<version>-setup.exe
 ```
 
 No build step and no framework: the renderer is plain DOM, so a clone runs with
