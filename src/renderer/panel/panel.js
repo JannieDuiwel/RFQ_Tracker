@@ -36,6 +36,18 @@ function esc(s) {
 
 App.esc = esc;
 
+/**
+ * One icon from the sprite in index.html, as a markup string.
+ *
+ * A string rather than a node because almost every caller is building a row or
+ * a dialog with a template literal, and a helper that returned an element would
+ * mean those become document.createElement ladders. The sprite ids are the only
+ * thing this has to agree with.
+ */
+App.icon = function icon(name, extra = '') {
+  return `<svg class="ico ${extra}" aria-hidden="true"><use href="#i-${name}" /></svg>`;
+};
+
 // --- talking to main -------------------------------------------------------
 
 /**
@@ -306,7 +318,7 @@ document.addEventListener('keydown', (e) => {
 App.api.onUpdateAvailable(({ version, url }) => {
   const btn = el('update');
   btn.hidden = false;
-  btn.textContent = `\u{1F514} Version ${version} is available — download`;
+  btn.innerHTML = `${App.icon('bell')} Version ${esc(version)} is available — download`;
   btn.addEventListener('click', () => App.api.openExternal(url));
 });
 

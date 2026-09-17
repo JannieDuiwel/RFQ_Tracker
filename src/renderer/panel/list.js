@@ -37,8 +37,9 @@ const ListView = (() => {
     document.getElementById('cols').innerHTML = COLUMNS
       .map((c) => `<col style="width:${c.width}" />`).join('');
     document.getElementById('head-row').innerHTML = COLUMNS.map((c) => {
+      // The chevron points the way the values run: up for A-Z, down for Z-A.
       const arrow = c.key === sortColumn
-        ? `<span class="arrow">${sortReverse ? '▼' : '▲'}</span>`
+        ? App.icon(sortReverse ? 'chevron-down' : 'chevron-up', 'ico-sm arrow')
         : '';
       const cls = c.cls ? ` class="${c.cls}"` : '';
       return `<th${cls} data-col="${c.key}" title="Sort by ${esc(c.label)}">${esc(c.label)}${arrow}</th>`;
@@ -57,8 +58,15 @@ const ListView = (() => {
     // The two counts that tell you there is more behind the row than the row.
     let extra = '';
     if (key === 'description') {
-      if (row.reminderCount) extra += `<span class="badge" title="Pending reminders">⏰ ${row.reminderCount}</span>`;
-      if (row.noteCount > 1) extra += `<span class="badge" title="Activity entries">\u{1F4DD} ${row.noteCount}</span>`;
+      if (row.reminderCount) {
+        extra += `<span class="badge" title="Pending reminders">`
+          + `${App.icon('clock', 'ico-sm')}${row.reminderCount}</span>`;
+      }
+      // Every RFQ already has "RFQ created.", so one entry is not worth a badge.
+      if (row.noteCount > 1) {
+        extra += `<span class="badge" title="Activity entries">`
+          + `${App.icon('note', 'ico-sm')}${row.noteCount}</span>`;
+      }
     }
     return `<td title="${esc(value)}">${esc(value)}${extra}</td>`;
   }

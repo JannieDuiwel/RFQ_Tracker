@@ -45,7 +45,7 @@ const Detail = (() => {
       .map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
 
     return `
-      <div class="dlg-head">&#128203; ${isNew ? 'New RFQ' : 'RFQ Details'}</div>
+      <div class="dlg-head">${App.icon('clipboard')} ${isNew ? 'New RFQ' : 'RFQ Details'}</div>
 
       <div class="dlg-tabs">
         <button class="tab" data-tab="details" aria-selected="true">Details</button>
@@ -157,7 +157,9 @@ const Detail = (() => {
     list.innerHTML = items.length
       ? items.map((r) => `<li data-id="${r.id}">
           <span class="when">${esc(r.remindAt)}</span>
-          <span class="${r.notified ? 'sent' : 'pending'}">${r.notified ? '✓ sent' : '⏰ pending'}</span>
+          <span class="${r.notified ? 'sent' : 'pending'}">${r.notified
+    ? `${App.icon('check', 'ico-sm')} sent`
+    : `${App.icon('clock', 'ico-sm')} pending`}</span>
           <span style="flex:1"></span>
           <button class="btn" data-remove="${r.id}">Remove</button>
         </li>`).join('')
@@ -338,22 +340,18 @@ const Detail = (() => {
     const res = await App.call(App.api.saveRfq(isNew ? null : rfq.id, fields));
     if (!res) return;
 
-    // Stay open on a first save rather than closing: the reason to save a new
-    // RFQ immediately is usually to start adding notes and reminders to it.
-    if (isNew) {
-      rfq = res.rfq;
-      isNew = false;
-      saved = values();
-      dlg.querySelector('.dlg-head').innerHTML = '&#128203; RFQ Details';
-      renderLog();
-      renderReminders();
-      App.toast('RFQ saved.');
-      await App.refresh();
-      return;
-    }
-
+    // Save closes, new or not. An earlier version kept a first save open so
+    // notes could be added to the record it had just created, but a button
+    // labelled "Save RFQ" that leaves the dialog sitting there reads as a save
+    // that did not work. Notes are two clicks away from the row instead.
+    const id = res.rfq.id;
     close(true);
-    App.refresh();
+    await App.refresh();
+
+    // Land on what was just saved, so a new RFQ does not vanish into a sorted
+    // list of eighty.
+    ListView.select(id);
+    ListView.revealSelected();
   }
 
   function close(force) {

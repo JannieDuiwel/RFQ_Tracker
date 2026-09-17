@@ -1,7 +1,7 @@
 {
   "name": "rfq-tracker",
   "productName": "RFQ Tracker",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Track Requests for Quote - contacts, status, due dates, activity log and reminders. Local-first, no account, no server.",
   "main": "src/main/main.js",
   "author": "Jan-Herman Schlechter",

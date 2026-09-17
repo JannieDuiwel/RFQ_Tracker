@@ -28,7 +28,7 @@ const Options = (() => {
 
     const dlg = document.createElement('dialog');
     dlg.innerHTML = `
-      <div class="dlg-head">&#9881; Options</div>
+      <div class="dlg-head">${App.icon('sliders')} Options</div>
       <div class="dlg-body" style="width:480px">
 
         <label class="toggle">
